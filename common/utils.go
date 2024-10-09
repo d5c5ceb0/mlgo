@@ -4,6 +4,8 @@ import (
 	"math"
 	"os"
 	"unsafe"
+
+	"github.com/kshard/float8"
 )
 
 // NB! INT = 32 bits
@@ -23,7 +25,6 @@ func ReadStringFromFile(file *os.File, len uint32) string {
 	return string(buf)
 }
 
-
 func ReadFP32FromFile(file *os.File) float32 {
 	buf := make([]byte, 4)
 	if count, err := file.Read(buf); err != nil || count != 4 {
@@ -40,12 +41,15 @@ func min(a, b int) int {
 	return b
 }
 
+func DecodeFloat32List(bs []byte) []float8.Float8 {
+	for n := 0; n < len(bs)/4; n++ {
+		bits := uint32(bs[n*4+3])<<24 | uint32(bs[n*4])<<16 | uint32(bs[n*4+1])<<8 | uint32(bs[n*4])
+		bs[n] = float8.ToFloat8(math.Float32frombits(bits))
+	}
 
-
-func DecodeFloat32List(bs []byte) []float32 {
-    return unsafe.Slice((*float32)(unsafe.Pointer(&bs[0])), len(bs)/4)
+	return bs
 }
 
 func EncodeFloat32List(fs []float32) []byte {
-    return unsafe.Slice((*byte)(unsafe.Pointer(&fs[0])), len(fs)*4)
+	return unsafe.Slice((*byte)(unsafe.Pointer(&fs[0])), len(fs)*4)
 }

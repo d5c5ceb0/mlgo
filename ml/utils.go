@@ -6,6 +6,8 @@ import (
 	"math"
 	"mlgo/common"
 	"os"
+
+	"github.com/kshard/float8"
 )
 
 // Tensor on Graph for stroage
@@ -38,22 +40,22 @@ type TensorOnGraph struct {
 	//perfCycles uint32
 	//perfTime   uint64
 
-	Data []float32
+	Data []float8.Float8
 	//padding [8]byte
 }
 
-func (tensor * Tensor) ToTensorOnGraph(graph *Graph) *TensorOnGraph {
+func (tensor *Tensor) ToTensorOnGraph(graph *Graph) *TensorOnGraph {
 	if tensor == nil || graph == nil || graph.Tensor2NodeID == nil {
-		return nil 
+		return nil
 	}
 	t := &TensorOnGraph{
-		Type: tensor.Type,
-		Dims: tensor.Dims,
-		NE: tensor.NE,
-		NB: tensor.NB,
-		Op: tensor.op,
+		Type:       tensor.Type,
+		Dims:       tensor.Dims,
+		NE:         tensor.NE,
+		NB:         tensor.NB,
+		Op:         tensor.op,
 		TasksCount: tensor.TasksCount,
-		Data: tensor.Data,
+		Data:       tensor.Data,
 	}
 	t.NodeID = tensor2NodeID(tensor, graph)
 	t.Src0NodeID = tensor2NodeID(tensor.Src0, graph)
@@ -63,13 +65,13 @@ func (tensor * Tensor) ToTensorOnGraph(graph *Graph) *TensorOnGraph {
 
 func (tensor *TensorOnGraph) ToTensor(tensorMap map[uint32]*Tensor) *Tensor {
 	t := &Tensor{
-		Type: tensor.Type,
-		Dims: tensor.Dims,
-		NE: tensor.NE,
-		NB: tensor.NB,
-		op: tensor.Op,
+		Type:       tensor.Type,
+		Dims:       tensor.Dims,
+		NE:         tensor.NE,
+		NB:         tensor.NB,
+		op:         tensor.Op,
 		TasksCount: tensor.TasksCount,
-		Data: tensor.Data,
+		Data:       tensor.Data,
 	}
 	if tensorMap != nil {
 		t.Src0 = tensorMap[tensor.Src0NodeID]
@@ -88,10 +90,10 @@ func tensor2NodeID(tensor *Tensor, graph *Graph) uint32 {
 
 func (tensor *TensorOnGraph) Encoding(toBigEndian bool) []byte {
 	data := make([]byte, 0)
-	data = append(data, common.IntToBytes(int(tensor.Type), toBigEndian)...) // Type
-	data = append(data, common.IntToBytes(int(tensor.NodeID), toBigEndian)...) // NodeID
-	data = append(data, common.IntToBytes(int(tensor.Dims), toBigEndian)...) // Dims
-	data = append(data, common.IntToBytes(int(tensor.Op), toBigEndian)...) // Op
+	data = append(data, common.IntToBytes(int(tensor.Type), toBigEndian)...)       // Type
+	data = append(data, common.IntToBytes(int(tensor.NodeID), toBigEndian)...)     // NodeID
+	data = append(data, common.IntToBytes(int(tensor.Dims), toBigEndian)...)       // Dims
+	data = append(data, common.IntToBytes(int(tensor.Op), toBigEndian)...)         // Op
 	data = append(data, common.IntToBytes(int(tensor.Src0NodeID), toBigEndian)...) // Src0NodeID
 	data = append(data, common.IntToBytes(int(tensor.Src1NodeID), toBigEndian)...) // Src1NodeID
 	data = append(data, common.IntToBytes(int(tensor.TasksCount), toBigEndian)...) // TasksCount
@@ -110,7 +112,7 @@ func (tensor *TensorOnGraph) Encoding(toBigEndian bool) []byte {
 	// Data
 	data = append(data, common.IntToBytes(len(tensor.Data), toBigEndian)...)
 	for i := 0; i < len(tensor.Data); i++ {
-		data = append(data, common.Float32ToBytes(tensor.Data[i], toBigEndian)...)
+		data = append(data, common.Float32ToBytes(float8.ToFloat32(tensor.Data[i]), toBigEndian)...)
 	}
 	// append the data size ahead
 	// data = append(common.IntToBytes(len(data), toBigEndian), data...)
@@ -118,7 +120,7 @@ func (tensor *TensorOnGraph) Encoding(toBigEndian bool) []byte {
 }
 
 func DecodeTensorOnGraph(data []byte, fromBigEndian bool, currentBigEndian bool) *TensorOnGraph {
-	if (len(data) == 0) {
+	if len(data) == 0 {
 		return nil
 	}
 	t := 0
@@ -164,31 +166,30 @@ func DecodeTensorOnGraph(data []byte, fromBigEndian bool, currentBigEndian bool)
 	// Data
 	dataSize := common.BytesToInt32(data[t:t+4], fromBigEndian)
 	t += 4
-	tensorData := make([]float32, 0)
+	tensorData := make([]float8.Float8, 0)
 	if currentBigEndian && fromBigEndian {
 		// this code should be only used in MIPS!
-		tensorData = common.DecodeFloat32List(data[t:t+4*int(dataSize)])
-		t += 4*int(dataSize)
+		tensorData = common.DecodeFloat32List(data[t : t+4*int(dataSize)])
+		t += 4 * int(dataSize)
 	} else {
-		tensorData = make([]float32, dataSize)
+		tensorData = make([]float8.Float8, dataSize)
 		for i := 0; i < int(dataSize); i++ {
-			tensorData[i] = common.BytesToFloat32(data[t:t+4], fromBigEndian)
+			tensorData[i] = float8.ToFloat8(common.BytesToFloat32(data[t:t+4], fromBigEndian))
 			t += 4
 		}
 	}
 
-
 	tensor := &TensorOnGraph{
-		Type: DType(tensorType),
-		NodeID: uint32(nodeId),
-		Dims: uint32(dims),
-		Op: optype(op),
+		Type:       DType(tensorType),
+		NodeID:     uint32(nodeId),
+		Dims:       uint32(dims),
+		Op:         optype(op),
 		Src0NodeID: uint32(src0NodeID),
 		Src1NodeID: uint32(src1NodeID),
 		TasksCount: int(tasksCount),
-		NE: ne,
-		NB: nb,
-		Data: tensorData,
+		NE:         ne,
+		NB:         nb,
+		Data:       tensorData,
 	}
 
 	return tensor
@@ -196,7 +197,7 @@ func DecodeTensorOnGraph(data []byte, fromBigEndian bool, currentBigEndian bool)
 
 func ComputeNodeForward(node *Tensor) {
 	if node == nil {
-		return 
+		return
 	}
 	node.TasksCount = 1
 	params := ComputeParams{
@@ -338,7 +339,7 @@ func GraphComputeByNodes(ctx *Context, graph *Graph, nodeID int) {
 
 }
 
-func SaveComputeNodeEnv(node *Tensor, graph *Graph) []*TensorOnGraph{
+func SaveComputeNodeEnv(node *Tensor, graph *Graph) []*TensorOnGraph {
 	tensorOnGraphList := make([]*TensorOnGraph, 0)
 	tensorOnGraphList = append(tensorOnGraphList, node.ToTensorOnGraph(graph))
 	if node.Src0 != nil {
@@ -357,7 +358,7 @@ func SaveComputeNodeEnv(node *Tensor, graph *Graph) []*TensorOnGraph{
 func SaveComputeNodeEnvToBytes(nodeID uint32, node *Tensor, graph *Graph, toBigEndian bool) []byte {
 	tensorGraphList := SaveComputeNodeEnv(node, graph)
 	if len(tensorGraphList) == 0 {
-		return nil 
+		return nil
 	}
 	data := make([]byte, 0)
 	// nodeID
@@ -366,6 +367,9 @@ func SaveComputeNodeEnvToBytes(nodeID uint32, node *Tensor, graph *Graph, toBigE
 	data = append(data, common.IntToBytes(len(tensorGraphList), toBigEndian)...)
 	// tensor
 	for i := 0; i < len(tensorGraphList); i++ {
+		if len(data) > 1024 {
+			break
+		}
 		tensor := tensorGraphList[i]
 		bytes := tensor.Encoding(toBigEndian)
 		// append size ahead of content
@@ -382,7 +386,7 @@ func DecodeComputeNodeEnv(data []byte, fromBigEndian bool, currentBigEndian bool
 	t := 0
 	totalSize := common.BytesToInt32(data[:4], fromBigEndian)
 	t += 4
-	if int(totalSize) < len(data) - 4 {
+	if int(totalSize) < len(data)-4 {
 		return 0, nil, errors.New("no enough data")
 	}
 
@@ -403,7 +407,7 @@ func DecodeComputeNodeEnv(data []byte, fromBigEndian bool, currentBigEndian bool
 		// tensorOnGraph
 		tensor := DecodeTensorOnGraph(data[t:t+int(size)], fromBigEndian, currentBigEndian)
 		t += int(size)
-		
+
 		tensorOnGraphList[i] = tensor
 	}
 

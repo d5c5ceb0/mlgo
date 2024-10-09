@@ -1,9 +1,10 @@
 module mlgo
 
-go 1.20
+go 1.22.8
 
 require (
 	github.com/jessevdk/go-flags v1.5.0
+	github.com/kshard/float8 v0.0.3
 	github.com/mattn/go-colorable v0.1.13
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db
 	github.com/schollz/progressbar/v3 v3.13.1

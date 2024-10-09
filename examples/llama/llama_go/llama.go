@@ -7,11 +7,10 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"reflect"
 	"runtime"
 	"sort"
-	"unsafe"
 
+	"github.com/kshard/float8"
 	"github.com/mattn/go-colorable"
 	"github.com/mitchellh/colorstring"
 	"github.com/schollz/progressbar/v3"
@@ -230,9 +229,9 @@ func Eval(
 	graph := ml.Graph{ThreadsCount: threadsCount}
 
 	// Convert the tokens to a []float32 slice
-	tokensFloat32 := make([]float32, len(tokens))
+	tokensFloat32 := make([]float8.Float8, len(tokens))
 	for i, token := range tokens {
-		tokensFloat32[i] = float32(token)
+		tokensFloat32[i] = float8.ToFloat8(float32(token))
 	}
 
 	// Initialize the embd tensor with the tokensFloat32 data
@@ -440,7 +439,7 @@ func Eval(
 				fmt.Println("Error: Index out of bounds during Logits copy")
 				os.Exit(1)
 			}
-			lctx.Logits[i] = inpL.Data[srcIndex]
+			lctx.Logits[i] = float8.ToFloat32(inpL.Data[srcIndex])
 		}
 	}
 
@@ -458,7 +457,7 @@ func Eval(
 	if len(lctx.Embedding) > 0 {
 		////memcpy(embedding_out.data(), (float *) ggml_get_data(embeddings) + (n_embd*(N - 1)), sizeof(float)*n_embd);
 		for i := uint32(0); i < embdSize; i++ {
-			lctx.Embedding[i] = embeddings.Data[(embdSize*(N-1))+i] // FIXME ASAP
+			lctx.Embedding[i] = float8.ToFloat32(embeddings.Data[(embdSize*(N-1))+i]) // FIXME ASAP
 		}
 	}
 
@@ -796,7 +795,6 @@ func SampleTopPTopK(
 //   - tokens:    new batch of tokens to process
 //   - n_past:    the context size so far
 //   - n_threads: number of threads to use
-//
 func ExpandGraph(
 
 	lctx *Context,
@@ -822,9 +820,9 @@ func ExpandGraph(
 	graph := ml.Graph{ThreadsCount: threadsCount}
 
 	// Convert the tokens to a []float32 slice
-	tokensFloat32 := make([]float32, len(tokens))
+	tokensFloat32 := make([]float8.Float8, len(tokens))
 	for i, token := range tokens {
-		tokensFloat32[i] = float32(token)
+		tokensFloat32[i] = float8.ToFloat8(float32(token))
 	}
 
 	// Initialize the embd tensor with the tokensFloat32 data
@@ -990,7 +988,6 @@ func ExpandGraph(
 		ml.Repeat(ctx0, model.norm, inpL),
 		inpL)
 
-
 	// lm_head
 	inpL = ml.MulMat(ctx0, model.output, inpL)
 
@@ -1008,7 +1005,6 @@ func ExpandGraph(
 
 	return &graph, ctx0, nil
 }
-
 
 // llama_model_load
 // load the model's weights from a file
@@ -1211,10 +1207,9 @@ func LoadModel(
 		}))
 
 	// --- load weights
-
 	var tensorsCount uint32
+	buf := make([]byte, 4*131072000)
 	for {
-
 		dims := readInt(file)
 		if dims < 1 || dims > 2 { // TODO Check for EOF
 			break
@@ -1277,24 +1272,24 @@ func LoadModel(
 		if shardType == ml.TYPE_F16 {
 			// FIXME Single-dimension tensors always presented as FP32
 			// after conversion from PyTorch even for FP16 models
-			for n := uint32(0); n < tensorSize; n++ {
-				tensor.Data[n] = readFP16ToFP32(file)
-			}
-		} else if shardType == ml.TYPE_F32 {
-			var fake []byte
-			fakeHeader := (*reflect.SliceHeader)(unsafe.Pointer(&fake))
-			// NB! unsafe.Pointer(tensor.Data) for *Data VS unsafe.Pointer(&tensor.Data) for Data
-			dataHeader := (*reflect.SliceHeader)(unsafe.Pointer(&tensor.Data))
-
-			fakeHeader.Data = dataHeader.Data
-			fakeHeader.Len = int(tensorSize * 4)
-			fakeHeader.Cap = int(tensorSize * 4)
-
-			//fmt.Printf("\n== FAKE []BYTE LEN = %d", len(fake))
-			if count, err := io.ReadFull(file, fake); err != nil || count != int(tensorSize*4) {
-				fmt.Printf("\n[ERROR] Failed to read BIG FP32 chunk from model!")
-				fmt.Printf("\n[ERROR] COUNT = %d | ERR = %s", count, err.Error())
+			if count, err := file.Read(buf[:tensorSize*2]); err != nil || count != int(tensorSize*2) {
 				os.Exit(1)
+			}
+
+			for n := uint32(0); n < tensorSize; n++ {
+				bits := uint16(buf[n*2+1])<<8 | uint16(buf[n*2])
+				tensor.Data[n] = float8.ToFloat8(float16.Frombits(bits).Float32())
+			}
+
+		} else if shardType == ml.TYPE_F32 {
+			if count, err := file.Read(buf[:tensorSize*4]); err != nil || count != int(tensorSize*4) {
+				os.Exit(1)
+			}
+
+			for n := uint32(0); n < tensorSize; n++ {
+
+				bits := uint32(buf[n*4+3])<<24 | uint32(buf[n*4])<<16 | uint32(buf[n*4+1])<<8 | uint32(buf[n*4])
+				tensor.Data[n] = float8.ToFloat8(math.Float32frombits(bits))
 			}
 		} else {
 			fmt.Printf("\n[ERROR] Tensor data type is not supported yet!")
@@ -1306,6 +1301,7 @@ func LoadModel(
 		if !silent && runtime.GOOS != "windows" {
 			bar.Add(1)
 		}
+
 	}
 
 	if !silent && runtime.GOOS != "windows" {
