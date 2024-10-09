@@ -5,6 +5,8 @@ import (
 	"math"
 	"os"
 	"sync"
+
+	"github.com/x448/float16"
 )
 
 const (
@@ -144,7 +146,7 @@ type Tensor struct {
 	//perfCycles uint32
 	//perfTime   uint64
 
-	Data []float32
+	Data []float16.Float16
 	//padding [8]byte
 }
 
@@ -459,7 +461,7 @@ func ReluImpl(ctx *Context, a *Tensor, inplace bool) *Tensor {
 
 	result.op = OP_RELU
 	result.Src0 = a
-	result.Src1 = nil 
+	result.Src1 = nil
 
 	if isNode {
 		result.grad = DupTensor(ctx, result)
@@ -793,7 +795,7 @@ func NewTensor1D(ctx *Context, dt DType, ne0 uint32) *Tensor {
 	return NewTensor(ctx, dt, 1, ne0, 1, 1, 1, nil)
 }
 
-func NewTensor1DWithData(ctx *Context, dt DType, ne0 uint32, data []float32) *Tensor {
+func NewTensor1DWithData(ctx *Context, dt DType, ne0 uint32, data []float16.Float16) *Tensor {
 	return NewTensor(ctx, dt, 1, ne0, 1, 1, 1, data)
 }
 
@@ -802,7 +804,8 @@ func NewTensor2D(ctx *Context, dt DType, ne0, ne1 uint32) *Tensor {
 	return NewTensor(ctx, dt, 2, ne0, ne1, 1, 1, nil)
 }
 
-func NewTensor2DWithData(ctx *Context, dt DType, ne0, ne1 uint32, data []float32) *Tensor {
+func NewTensor2DWithData(ctx *Context, dt DType, ne0, ne1 uint32, data []float16.Float16) *Tensor {
+
 	return NewTensor(ctx, dt, 2, ne0, ne1, 1, 1, data)
 }
 
@@ -815,7 +818,7 @@ func NewTensor4D(ctx *Context, dt DType, ne0, ne1, ne2, ne3 uint32) *Tensor {
 }
 
 // ggml_new_tensor_impl
-func NewTensor(ctx *Context, dt DType, dims uint32, ne0, ne1, ne2, ne3 uint32, data []float32) *Tensor {
+func NewTensor(ctx *Context, dt DType, dims uint32, ne0, ne1, ne2, ne3 uint32, data []float16.Float16) *Tensor {
 
 	if dt != TYPE_F32 && dt != TYPE_I32 {
 		fmt.Printf("\n[ERROR] NewTensorImpl got not supported type : %d", dt)
@@ -845,7 +848,7 @@ func NewTensor(ctx *Context, dt DType, dims uint32, ne0, ne1, ne2, ne3 uint32, d
 	total := ne0 * ne1 * ne2 * ne3
 
 	if data == nil {
-		result.Data = make([]float32, total, total) // &newData
+		result.Data = make([]float16.Float16, total, total) // &newData
 	} else {
 		result.Data = data
 	}
@@ -933,9 +936,9 @@ func Rope(ctx *Context, a *Tensor, past, dims, mode uint32) *Tensor {
 	result := ViewTensor(ctx, a)
 
 	b := NewTensor1D(ctx, TYPE_I32, 3)
-	b.Data[0] = float32(past)
-	b.Data[1] = float32(dims)
-	b.Data[2] = float32(mode)
+	b.Data[0] = float16.Fromfloat32(float32(past))
+	b.Data[1] = float16.Fromfloat32(float32(dims))
+	b.Data[2] = float16.Fromfloat32(float32(mode))
 
 	result.op = OP_ROPE
 	result.Src0 = a
@@ -996,7 +999,7 @@ func SetFP32(tensor *Tensor, value float32) *Tensor {
 	n := tensor.Nelements()
 	for i := uint32(0); i < n; i++ {
 		////ggml_vec_set_f32(nc, (float *)(data + i*n1), value);
-		tensor.Data[i] = value
+		tensor.Data[i] = float16.Fromfloat32(value)
 	}
 	return tensor
 }
@@ -1604,8 +1607,6 @@ func GraphCompute(ctx *Context, graph *Graph) {
 
 }
 
-
-
 // =======================================================================
 
 func ComputeForward(graph *Graph, params *ComputeParams, tensor *Tensor) {
@@ -1756,7 +1757,7 @@ func ComputeForward(graph *Graph, params *ComputeParams, tensor *Tensor) {
 	}
 }
 
-func VecCopyFP32(n uint32, y, x []float32) {
+func VecCopyFP32(n uint32, y, x []float16.Float16) {
 	for i := uint32(0); i < n; i++ {
 		y[i] = x[i]
 	}
@@ -1859,7 +1860,7 @@ func ComputeForwardRMSNormFP32(params *ComputeParams, src0, dst *Tensor) {
 				//VecScaleFP32(ne00, y, float32(scale))
 
 				for i := uint32(0); i < ne00; i++ {
-					y[i] = x[i] * scale
+					y[i] = float16.Fromfloat32(x[i].Float32() * scale)
 				}
 			}
 		}
@@ -1867,7 +1868,7 @@ func ComputeForwardRMSNormFP32(params *ComputeParams, src0, dst *Tensor) {
 }
 
 // ggml_vec_scale_f32
-func VecScaleFP32(n uint32, y []float32, v float32) {
+func VecScaleFP32(n uint32, y []float16.Float16, v float16.Float16) {
 	for i := uint32(0); i < n; i++ {
 		y[i] *= v
 	}
@@ -1926,35 +1927,35 @@ func ComputeForwardRepeatFP32(params *ComputeParams, src0, dst *Tensor) {
 
 // inline static void ggml_vec_relu_f32 (const int n, float * y, const float * x) { for (int i = 0; i < n; ++i) y[i] = (x[i] > 0.f) ? x[i] : 0.f; }
 
-func VecReluFP32(n uint32, y, x []float32) {
+func VecReluFP32(n uint32, y, x []float16.Float16) {
 	for i := uint32(0); i < n; i++ {
 		if x[i] > 0 {
 			y[i] = x[i]
 		} else {
-			y[i] = 0
+			y[i] = float16.Fromfloat32(0)
 		}
 	}
 }
 
 func ComputeForwardReluFP32(params *ComputeParams, src0, dst *Tensor) {
 	// assert(params->ith == 0);
-    // assert(ggml_are_same_shape(src0, dst));
+	// assert(ggml_are_same_shape(src0, dst));
 	if !AreSameShape(src0, dst) {
 		fmt.Printf("\n[HALT] ComputeForwardReluFP32 : different shapes!")
 		os.Exit(1)
 	}
 
 	if params.Type == TASK_INIT || params.Type == TASK_FINALIZE {
-		return 
+		return
 	}
 
 	n := src0.Nrows()
 	nc := src0.NE[0]
 
 	// assert(dst->nb[0]  == sizeof(float));
-    // assert(src0->nb[0] == sizeof(float));
+	// assert(src0->nb[0] == sizeof(float));
 
-	for i := uint32(0); i < n; i++{
+	for i := uint32(0); i < n; i++ {
 		// ggml_vec_relu_f32(nc,
 		// 	(float *) ((char *) dst->data  + i*( dst->nb[1])),
 		// 	(float *) ((char *) src0->data + i*(src0->nb[1])));
@@ -1962,7 +1963,7 @@ func ComputeForwardReluFP32(params *ComputeParams, src0, dst *Tensor) {
 	}
 }
 
-func VecMulFP32(n uint32, z, x, y []float32) {
+func VecMulFP32(n uint32, z, x, y []float16.Float16) {
 	for i := uint32(0); i < n; i++ {
 		z[i] = x[i] * y[i]
 	}
@@ -2190,10 +2191,10 @@ func ComputeForwardMulMatFP32(params *ComputeParams, src0, src1, dst *Tensor) {
 
 			sum := float32(0.0)
 			for i := uint32(0); i < ne00; i++ {
-				sum += src0Ptr[i] * src1Ptr[i]
+				sum += (src0Ptr[i] * src1Ptr[i]).Float32()
 			}
 
-			dst.Data[i0*nb0+ic*nb1+i2*nb2+i3*nb3] = sum
+			dst.Data[i0*nb0+ic*nb1+i2*nb2+i3*nb3] = float16.Fromfloat32(sum)
 		}
 	}
 
@@ -2425,8 +2426,8 @@ func ComputeForwardRopeFP32(params *ComputeParams, src0, src1, dst *Tensor) {
 					x0 := float64(src[0])
 					x1 := float64(src[1])
 
-					dstData[0] = float32(x0*cosTheta - x1*sinTheta)
-					dstData[1] = float32(x0*sinTheta + x1*cosTheta)
+					dstData[0] = float16.Fromfloat32(float32(x0*cosTheta - x1*sinTheta))
+					dstData[1] = float16.Fromfloat32(float32(x0*sinTheta + x1*cosTheta))
 				}
 			}
 		}
@@ -2508,7 +2509,7 @@ func ComputeForwardDiagMaskInfFP32(params *ComputeParams, src0, src1, dst *Tenso
 			for i := pastCount; i < nc; i++ {
 				if i > pastCount+j {
 					////*(float *)((char *) dst->data + k*dst->nb[2] + j*dst->nb[1] + i*dst->nb[0]) = -INFINITY;
-					dst.Data[k*dst.NB[2]/4+j*dst.NB[1]/4+i*dst.NB[0]/4] = float32(math.Inf(-1)) // TODO Use const
+					dst.Data[k*dst.NB[2]/4+j*dst.NB[1]/4+i*dst.NB[0]/4] = float16.Fromfloat32(float32(math.Inf(-1))) // TODO Use const
 				}
 			}
 		}
@@ -2527,10 +2528,10 @@ func maxFloat(x, y float32) float32 {
 	return y
 }
 
-func VecMaxFP32(n uint32, x []float32) float32 {
+func VecMaxFP32(n uint32, x []float16.Float16) float32 {
 	max := float32(math.Inf(-1)) // TODO use constant
 	for i := uint32(0); i < n; i++ {
-		max = maxFloat(max, x[i])
+		max = maxFloat(max, x[i].Float32())
 	}
 	return max
 }
@@ -2580,7 +2581,7 @@ func ComputeForwardSoftMaxFP32(params *ComputeParams, src0, dst *Tensor) {
 		sum := float32(0.0)
 		//var bits uint16
 		for i := 0; i < int(nc); i++ {
-			if p[i] == negInf { // TODO use constant
+			if p[i] == float16.Fromfloat32(negInf) { // TODO use constant
 				p[i] = 0.0
 			} else {
 				//const float val = (p[i] == -INFINITY) ? 0.0 : exp(p[i] - max);
@@ -2595,15 +2596,15 @@ func ComputeForwardSoftMaxFP32(params *ComputeParams, src0, dst *Tensor) {
 				//////////////////////////exp := TableExpFP16[bits] // FIXME table_exp_f16 ASAP Initialize first!
 				//////////////////////////val := exp.Float32()
 
-				val := float32(math.Exp(float64(p[i] - max)))
+				val := float32(math.Exp(float64(p[i].Float32() - max)))
 				sum += val
-				p[i] = val
+				p[i] = float16.Fromfloat32(val)
 			}
 		}
 
 		////assert(sum > 0.0f);
 		sum = 1.0 / sum
-		VecScaleFP32(nc, p, sum)
+		VecScaleFP32(nc, p, float16.Fromfloat32(sum))
 	}
 
 	if DEBUG {
@@ -2612,7 +2613,7 @@ func ComputeForwardSoftMaxFP32(params *ComputeParams, src0, dst *Tensor) {
 }
 
 // inline static void ggml_vec_add_f32 (const int n, float * z, const float * x, const float * y) { for (int i = 0; i < n; ++i) z[i]  = x[i] + y[i]; }
-func VecAddFP32(n uint32, z, x, y []float32) {
+func VecAddFP32(n uint32, z, x, y []float16.Float16) {
 	for i := uint32(0); i < n; i++ {
 		z[i] = x[i] + y[i]
 	}
@@ -2696,9 +2697,9 @@ func SiluFP32(x float32) float32 {
 }
 
 // inline static void ggml_vec_silu_f32(const int n, float * y, const float * x) {
-func VecSiluFP32(n uint32, y, x []float32) {
+func VecSiluFP32(n uint32, y, x []float16.Float16) {
 	for i := uint32(0); i < n; i++ {
-		y[i] = SiluFP32(x[i]) // ggml_silu_f32
+		y[i] = float16.Fromfloat32(SiluFP32(x[i].Float32())) // ggml_silu_f32
 	}
 }
 
@@ -2978,7 +2979,6 @@ func Init(params InitParams) {
 	////const uint64_t t_end = ggml_time_us(); UNUSED(t_end);
 
 }
-
 
 func PrintTensor(tensor *Tensor, name string) {
 	var dt string

@@ -4,6 +4,8 @@ import (
 	"math"
 	"os"
 	"unsafe"
+
+	"github.com/x448/float16"
 )
 
 // NB! INT = 32 bits
@@ -23,7 +25,6 @@ func ReadStringFromFile(file *os.File, len uint32) string {
 	return string(buf)
 }
 
-
 func ReadFP32FromFile(file *os.File) float32 {
 	buf := make([]byte, 4)
 	if count, err := file.Read(buf); err != nil || count != 4 {
@@ -40,12 +41,16 @@ func min(a, b int) int {
 	return b
 }
 
+func DecodeFloat32List(bs []byte) []float16.Float16 {
+	buf := make([]float16.Float16, len(bs)/4)
+	for n := 0; n < len(bs)/4; n++ {
+		bits := uint32(bs[n*4+3])<<24 | uint32(bs[n*4])<<16 | uint32(bs[n*4+1])<<8 | uint32(bs[n*4])
+		buf[n] = float16.Fromfloat32(math.Float32frombits(bits))
+	}
 
-
-func DecodeFloat32List(bs []byte) []float32 {
-    return unsafe.Slice((*float32)(unsafe.Pointer(&bs[0])), len(bs)/4)
+	return buf
 }
 
 func EncodeFloat32List(fs []float32) []byte {
-    return unsafe.Slice((*byte)(unsafe.Pointer(&fs[0])), len(fs)*4)
+	return unsafe.Slice((*byte)(unsafe.Pointer(&fs[0])), len(fs)*4)
 }
